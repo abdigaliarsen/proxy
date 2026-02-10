@@ -15,8 +15,8 @@ type mockResponseWriter struct {
 func newMockResponseWriter() *mockResponseWriter {
 	return &mockResponseWriter{
 		ResponseRecorder: httptest.NewRecorder(),
-		buffer:           new(bytes.Buffer),
-		status:           http.StatusOK,
+		buffer:           bytes.NewBuffer(nil),
+		status:           http.StatusTeapot,
 	}
 }
 
