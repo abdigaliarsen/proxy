@@ -72,10 +72,12 @@ func TestProxyRedirect(t *testing.T) {
 
 func TestProxyHeaders(t *testing.T) {
 	t.Run("set headers/body to proxy request", func(t *testing.T) {
-		httpClient := newMockHttpClient(&http.Client{})
 		service := mockTargetService()
+		transport := newMockRoundTripper()
 
-		proxy := NewProxy(httpClient)
+		proxy := NewProxy(&http.Client{
+			Transport: transport,
+		})
 		w := newMockResponseWriter()
 
 		expectedBody := "test request body"
@@ -87,12 +89,12 @@ func TestProxyHeaders(t *testing.T) {
 		proxy.ServeHTTP(w, r)
 
 		for key := range r.Header {
-			if r.Header.Get(key) != httpClient.capturedRequest.Header.Get(key) {
+			if r.Header.Get(key) != transport.capturedRequest.Header.Get(key) {
 				t.Errorf("proxy http client's request %s doesn't match with incoming request", key)
 			}
 		}
 
-		capturedBody, err := io.ReadAll(httpClient.capturedRequest.Body)
+		capturedBody, err := io.ReadAll(transport.capturedRequest.Body)
 		if err != nil {
 			t.Fatalf("failed to read captured request body: %v", err)
 		}
@@ -109,4 +111,97 @@ func TestProxyHeaders(t *testing.T) {
 			t.Errorf("expected body %q, got %q", mockExpectedResponseBody, w.buffer.String())
 		}
 	})
+}
+
+func TestProxyCookies(t *testing.T) {
+	t.Run("keep session dependent cookies for multiple request", func(t *testing.T) {
+		requestCount := 0
+		var receivedCookies []*http.Cookie
+		service := httptest.NewServer(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requestCount++
+				receivedCookies = r.Cookies()
+
+				if requestCount == 1 {
+					http.SetCookie(w, &http.Cookie{
+						Name:  "session-token",
+						Value: "abc123",
+						Path:  "/",
+					})
+					http.SetCookie(w, &http.Cookie{
+						Name:  "user-id",
+						Value: "user456",
+						Path:  "/",
+					})
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte("first request"))
+				} else {
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte("subsequent request"))
+				}
+			}),
+		)
+		defer service.Close()
+
+		proxy := NewProxy(&http.Client{})
+
+		w1 := newMockResponseWriter()
+		r1 := httptest.NewRequest(http.MethodGet, "/proxy/"+service.URL, nil)
+
+		proxy.ServeHTTP(w1, r1)
+
+		sessionCookie := extractSessionCookie(w1.ResponseRecorder)
+		if sessionCookie == nil {
+			t.Fatal("expected proxy session cookie to be set")
+		}
+		sessionID := sessionCookie.Value
+
+		expectedCookies := map[string]string{
+			"session-token": "abc123",
+			"user-id":       "user456",
+		}
+
+		for i := 2; i <= 5; i++ {
+			w := newMockResponseWriter()
+			r := httptest.NewRequest(http.MethodGet, "/proxy/"+service.URL, nil)
+			r.AddCookie(&http.Cookie{
+				Name:  proxySessionCookie,
+				Value: sessionID,
+			})
+
+			receivedCookies = nil
+			proxy.ServeHTTP(w, r)
+
+			if len(receivedCookies) == 0 {
+				t.Errorf("request %d: expected cookies from first request to be sent", i)
+				continue
+			}
+
+			receivedCookieMap := make(map[string]string)
+			for _, cookie := range receivedCookies {
+				receivedCookieMap[cookie.Name] = cookie.Value
+			}
+
+			for name, expectedValue := range expectedCookies {
+				if actualValue, found := receivedCookieMap[name]; !found {
+					t.Errorf("request %d: expected cookie %s to be sent", i, name)
+				} else if actualValue != expectedValue {
+					t.Errorf("request %d: expected cookie %s to have value %q, got %q", i, name, expectedValue, actualValue)
+				}
+			}
+
+			if w.Code != http.StatusOK {
+				t.Errorf("request %d: expected status code %d, got %d", i, http.StatusOK, w.Code)
+			}
+		}
+	})
+}
+
+func extractSessionCookie(w *httptest.ResponseRecorder) *http.Cookie {
+	for _, c := range w.Result().Cookies() {
+		if c.Name == proxySessionCookie {
+			return c
+		}
+	}
+	return nil
 }

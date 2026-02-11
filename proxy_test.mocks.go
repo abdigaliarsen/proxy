@@ -9,18 +9,18 @@ import (
 
 const mockExpectedResponseBody = "<>expected response body</>"
 
-type mockHttpClient struct {
-	HttpClient
+type mockRoundTripper struct {
+	base            http.RoundTripper
 	capturedRequest *http.Request
 }
 
-func newMockHttpClient(client HttpClient) *mockHttpClient {
-	return &mockHttpClient{
-		HttpClient: client,
+func newMockRoundTripper() *mockRoundTripper {
+	return &mockRoundTripper{
+		base: http.DefaultTransport,
 	}
 }
 
-func (c *mockHttpClient) Do(req *http.Request) (*http.Response, error) {
+func (c *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	cloned := req.Clone(req.Context())
 
 	if req.Body != nil {
@@ -33,7 +33,8 @@ func (c *mockHttpClient) Do(req *http.Request) (*http.Response, error) {
 	}
 
 	c.capturedRequest = cloned
-	return c.HttpClient.Do(req)
+
+	return c.base.RoundTrip(req)
 }
 
 type mockResponseWriter struct {
@@ -80,20 +81,14 @@ func mockRedirectService() *httptest.Server {
 }
 
 func mockNestedRedirectService() *httptest.Server {
-	targetService := mockTargetService()
-	redirectService1 := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, targetService.URL, http.StatusMovedPermanently)
-		}),
-	)
-	redirectService2 := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, redirectService1.URL, http.StatusMovedPermanently)
-		}),
-	)
-	return httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, redirectService2.URL, http.StatusMovedPermanently)
-		}),
-	)
+	target := mockTargetService()
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusMovedPermanently)
+	}))
+
+	finalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirect.URL, http.StatusMovedPermanently)
+	}))
+
+	return finalServer
 }
