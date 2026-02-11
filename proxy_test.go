@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,7 +9,7 @@ import (
 	"time"
 )
 
-func TestProxy(t *testing.T) {
+func TestProxyRedirect(t *testing.T) {
 	testCases := []struct {
 		name         string
 		proxy        *Proxy
@@ -21,14 +22,21 @@ func TestProxy(t *testing.T) {
 			proxy:        NewProxy(&http.Client{}),
 			service:      mockTargetService(),
 			expectCode:   http.StatusOK,
-			expectedBody: "expected body",
+			expectedBody: mockExpectedResponseBody,
 		},
 		{
 			name:         "redirect service",
 			proxy:        NewProxy(&http.Client{}),
 			service:      mockRedirectService(),
 			expectCode:   http.StatusOK,
-			expectedBody: "expected body",
+			expectedBody: mockExpectedResponseBody,
+		},
+		{
+			name:         "nested redirect service",
+			proxy:        NewProxy(&http.Client{}),
+			service:      mockNestedRedirectService(),
+			expectCode:   http.StatusOK,
+			expectedBody: mockExpectedResponseBody,
 		},
 		{
 			name: "no proxy redirect",
@@ -60,4 +68,45 @@ func TestProxy(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProxyHeaders(t *testing.T) {
+	t.Run("set headers/body to proxy request", func(t *testing.T) {
+		httpClient := newMockHttpClient(&http.Client{})
+		service := mockTargetService()
+
+		proxy := NewProxy(httpClient)
+		w := newMockResponseWriter()
+
+		expectedBody := "test request body"
+		r := httptest.NewRequest(http.MethodGet, "/proxy/"+service.URL, strings.NewReader(expectedBody))
+		r.Header.Set("Authorization", "Bearer token123")
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-Custom-Header", "custom-value")
+
+		proxy.ServeHTTP(w, r)
+
+		for key := range r.Header {
+			if r.Header.Get(key) != httpClient.capturedRequest.Header.Get(key) {
+				t.Errorf("proxy http client's request %s doesn't match with incoming request", key)
+			}
+		}
+
+		capturedBody, err := io.ReadAll(httpClient.capturedRequest.Body)
+		if err != nil {
+			t.Fatalf("failed to read captured request body: %v", err)
+		}
+
+		if string(capturedBody) != expectedBody {
+			t.Errorf("proxy http client's request body doesn't match: expected %q, got %q", expectedBody, string(capturedBody))
+		}
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status code %d, got %d", http.StatusOK, w.Code)
+		}
+
+		if !strings.Contains(w.buffer.String(), mockExpectedResponseBody) {
+			t.Errorf("expected body %q, got %q", mockExpectedResponseBody, w.buffer.String())
+		}
+	})
 }

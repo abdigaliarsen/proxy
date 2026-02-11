@@ -2,9 +2,39 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
 )
+
+const mockExpectedResponseBody = "<>expected response body</>"
+
+type mockHttpClient struct {
+	HttpClient
+	capturedRequest *http.Request
+}
+
+func newMockHttpClient(client HttpClient) *mockHttpClient {
+	return &mockHttpClient{
+		HttpClient: client,
+	}
+}
+
+func (c *mockHttpClient) Do(req *http.Request) (*http.Response, error) {
+	cloned := req.Clone(req.Context())
+
+	if req.Body != nil {
+		bodyBytes, _ := io.ReadAll(req.Body)
+		req.Body.Close()
+
+		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+		cloned.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	}
+
+	c.capturedRequest = cloned
+	return c.HttpClient.Do(req)
+}
 
 type mockResponseWriter struct {
 	*httptest.ResponseRecorder
@@ -34,7 +64,7 @@ func mockTargetService() *httptest.Server {
 	return httptest.NewServer(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("expected body"))
+			w.Write([]byte(mockExpectedResponseBody))
 		}),
 	)
 }
@@ -45,6 +75,25 @@ func mockRedirectService() *httptest.Server {
 	return httptest.NewServer(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, targetService.URL, http.StatusMovedPermanently)
+		}),
+	)
+}
+
+func mockNestedRedirectService() *httptest.Server {
+	targetService := mockTargetService()
+	redirectService1 := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, targetService.URL, http.StatusMovedPermanently)
+		}),
+	)
+	redirectService2 := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, redirectService1.URL, http.StatusMovedPermanently)
+		}),
+	)
+	return httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, redirectService2.URL, http.StatusMovedPermanently)
 		}),
 	)
 }

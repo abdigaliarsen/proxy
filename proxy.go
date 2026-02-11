@@ -7,7 +7,7 @@ import (
 )
 
 type HttpClient interface {
-	Get(url string) (resp *http.Response, err error)
+	Do(req *http.Request) (*http.Response, error)
 }
 
 type Proxy struct {
@@ -24,7 +24,17 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxyKeyPos := strings.Index(r.URL.Path, "/proxy/")
 	url := r.URL.Path[proxyKeyPos+len("/proxy/"):]
 
-	resp, err := p.cli.Get(url)
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, url, r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	for key, header := range r.Header {
+		req.Header[key] = header
+	}
+
+	resp, err := p.cli.Do(req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
