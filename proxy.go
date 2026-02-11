@@ -7,14 +7,15 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"strings"
+	"sync"
 )
 
 const proxySessionCookie = "proxy-session-id"
 
 type Proxy struct {
-	cli *http.Client
-	// подумать как лучше обработать несколько одновременных запросов
+	cli        *http.Client
 	cookieJars map[string]*cookiejar.Jar
+	mu         sync.RWMutex
 }
 
 func NewProxy(httpClient *http.Client) *Proxy {
@@ -39,13 +40,26 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	session := p.getOrCreateSession(w, r)
-	if p.cookieJars[session] == nil {
-		jar, _ := cookiejar.New(&cookiejar.Options{})
-		p.cookieJars[session] = jar
+
+	p.mu.RLock()
+	jar := p.cookieJars[session]
+	p.mu.RUnlock()
+
+	if jar == nil {
+		newJar, _ := cookiejar.New(&cookiejar.Options{})
+		p.mu.Lock()
+		if p.cookieJars[session] == nil {
+			p.cookieJars[session] = newJar
+			jar = newJar
+		} else {
+			jar = p.cookieJars[session]
+		}
+		p.mu.Unlock()
 	}
+
 	sessionClient := &http.Client{
 		Transport:     p.cli.Transport,
-		Jar:           p.cookieJars[session],
+		Jar:           jar,
 		CheckRedirect: p.cli.CheckRedirect,
 		Timeout:       p.cli.Timeout,
 	}
