@@ -3,6 +3,8 @@ package main
 import (
 	"net/http"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func main() {
@@ -10,8 +12,10 @@ func main() {
 		Timeout: 10 * time.Second,
 	})
 
-	http.Handle("/proxy/", proxy)
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	router := chi.NewRouter()
+	router.Handle("/proxy/*", proxy)
+
+	if err := http.ListenAndServe(":8080", router); err != nil {
 		return
 	}
 }
