@@ -151,6 +151,32 @@ func TestProxyQueryParams(t *testing.T) {
 	})
 }
 
+func TestProxyTimeout(t *testing.T) {
+	t.Run("returns gateway timeout when upstream request times out", func(t *testing.T) {
+		service := httptest.NewServer(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				time.Sleep(100 * time.Millisecond)
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("slow response"))
+			}),
+		)
+		defer service.Close()
+
+		proxy := NewProxy(&http.Client{
+			Timeout: 10 * time.Millisecond,
+		})
+
+		w := newMockResponseWriter()
+		r := httptest.NewRequest(http.MethodGet, "/proxy/"+service.URL, nil)
+
+		proxy.ServeHTTP(w, r)
+
+		if w.Code != http.StatusGatewayTimeout {
+			t.Fatalf("expected status code %d, got %d", http.StatusGatewayTimeout, w.Code)
+		}
+	})
+}
+
 func TestProxyCookies(t *testing.T) {
 	t.Run("keep session dependent cookies for multiple request", func(t *testing.T) {
 		requestCount := 0
