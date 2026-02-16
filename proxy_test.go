@@ -116,6 +116,41 @@ func TestProxyHeaders(t *testing.T) {
 	})
 }
 
+func TestProxyQueryParams(t *testing.T) {
+	t.Run("forwards query params to target service", func(t *testing.T) {
+		var receivedFoo string
+		var receivedRawQuery string
+
+		service := httptest.NewServer(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				receivedFoo = r.URL.Query().Get("foo")
+				receivedRawQuery = r.URL.RawQuery
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("ok"))
+			}),
+		)
+		defer service.Close()
+
+		proxy := NewProxy(&http.Client{})
+		w := newMockResponseWriter()
+		r := httptest.NewRequest(http.MethodGet, "/proxy/"+service.URL+"?foo=bar&n=1", nil)
+
+		proxy.ServeHTTP(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status code %d, got %d", http.StatusOK, w.Code)
+		}
+
+		if receivedFoo != "bar" {
+			t.Fatalf("expected query param foo=bar, got foo=%q", receivedFoo)
+		}
+
+		if receivedRawQuery != "foo=bar&n=1" && receivedRawQuery != "n=1&foo=bar" {
+			t.Fatalf("expected raw query to contain forwarded params, got %q", receivedRawQuery)
+		}
+	})
+}
+
 func TestProxyCookies(t *testing.T) {
 	t.Run("keep session dependent cookies for multiple request", func(t *testing.T) {
 		requestCount := 0

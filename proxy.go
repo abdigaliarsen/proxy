@@ -27,7 +27,15 @@ func NewProxy(httpClient *http.Client) *Proxy {
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxyKeyPos := strings.Index(r.URL.Path, "/proxy/")
+	if proxyKeyPos == -1 {
+		http.Error(w, "invalid proxy path", http.StatusBadRequest)
+		return
+	}
+
 	proxyUrl := r.URL.Path[proxyKeyPos+len("/proxy/"):]
+	if r.URL.RawQuery != "" {
+		proxyUrl += "?" + r.URL.RawQuery
+	}
 
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, proxyUrl, r.Body)
 	if err != nil {
